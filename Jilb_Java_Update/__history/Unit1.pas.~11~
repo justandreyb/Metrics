@@ -1,0 +1,332 @@
+unit Unit1;
+
+interface
+
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.Menus, Vcl.StdCtrls, RegularExpressions;
+
+type
+  TMainForm = class(TForm)
+    b_OpenFile: TButton;
+    b_EnterText: TButton;
+    Answers: TGroupBox;
+    l_NumberOfOperators: TLabel;
+    NumberOfOperators: TLabel;
+    ConditionalOperators: TLabel;
+    l_ConditionOperators: TLabel;
+    l_MaximalAttachments: TLabel;
+    MaximalAttachments: TLabel;
+    l_RelativeComplexity: TLabel;
+    RelativeComplexity: TLabel;
+    b_Analyze: TButton;
+    Code: TMemo;
+    Menu: TMainMenu;
+    b_File: TMenuItem;
+    b_Clear: TMenuItem;
+    b_Exit: TMenuItem;
+    b_Help: TMenuItem;
+    b_About: TMenuItem;
+    procedure b_ClearClick(Sender: TObject);
+    procedure b_ExitClick(Sender: TObject);
+    procedure b_AboutClick(Sender: TObject);
+    procedure b_OpenFileClick(Sender: TObject);
+    procedure b_EnterTextClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure b_AnalyzeClick(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  MainForm: TMainForm;
+
+implementation
+
+{$R *.dfm}
+
+const
+  DEFFORMHEIGHT = 485;
+  MINFORMHEIGHT = 200;
+  OPERATORSCOUNT = 40;
+  COMMENTSCOUNT = 3;
+  CONDITIONALCOUNT = 3;
+  ENDLINE = #13;
+  NEWLINE = #10;
+  TAB = #9;
+
+var
+    CommentsArray: array [0..(COMMENTSCOUNT)-1] of string = (
+                                  '(([\/][\*]\W).+?[^\\]+?[^\\][\*][\/])|([\/][\*].+?[^\\]+?[^\\][\*][\/])' ,
+                                  '[\/][\/].+[^\n]+?[^\n]' ,
+                                  '["].*?[^\\].?["]'
+                                  );
+
+    OperatorsArray: array [0..(OPERATORSCOUNT - 1)] of string = ('\b=\b','\b\+\b',
+          '\b-\b','\+\+','--','\b%\b','![a-z]','\b==\b','\b!=\b','\b>\b','\b<\b',
+          '\b>=\b','\b<=\b','\b&&\b','\b||\b','\b&\b','\b|\b','\b^\b','\b<<\b',
+          '\b>>\b','[[a-z]]','\bint\b','\bfloat\b','\bboolean\b','\bdouble\b',
+          '\bbyte\b','\bdelete\b','\bnew\b',',','\bbreak\b',
+          '\bgoto\b','\bchar\b','{','\bSystem[\.]','\bimport\b',
+          '-=','\+=','\bvoid\b','\bin[\. ]','\bpackage\b');
+
+    ConditionalArray : array [0..(CONDITIONALCOUNT)-1] of string = (
+                                              '\bif([^}])+\}',
+                                              '[a-z=+\-&*\\]?[a-z]:[a-z]',
+                                              '\bswitch\b'
+                                              );
+
+    NumberOperators: integer = 0;
+    NumberConditionalOperators: integer = 0;
+
+
+
+//--------------------[Form setup and correctly work]---------------------------
+procedure ClearInformation;
+begin
+  with MainForm do
+  begin
+    Height := MINFORMHEIGHT;
+    Code.Text := '';
+    Code.Visible := False;
+    b_EnterText.Visible := True;
+    b_EnterText.Enabled := True;
+    b_OpenFile.Visible := True;
+    b_OpenFile.Enabled := True;
+    b_Analyze.Enabled := False;
+    ConditionalOperators.Caption := '';
+    NumberOfOperators.Caption := '';
+    RelativeComplexity.Caption := '';
+    MaximalAttachments.Caption := '';
+    Code.ReadOnly := False;
+  end;
+end;
+
+procedure TMainForm.b_ExitClick(Sender: TObject);
+begin
+  Close;
+end;
+
+procedure TMainForm.b_ClearClick(Sender: TObject);
+begin
+  ClearInformation;
+end;
+
+procedure TMainForm.b_AboutClick(Sender: TObject);
+begin
+  MessageBox(ClientHandle,PChar('Данное программное средство анализирует код на Java по метрике Джилба'),PChar(' About '),0);
+end;
+
+procedure TMainForm.b_OpenFileClick(Sender: TObject);
+var openDialog : TOpenDialog;
+    CodeFile : string;
+begin
+  try
+    openDialog := TOpenDialog.Create(self);
+    openDialog.InitialDir := 'C://';
+    openDialog.Options := [ofFileMustExist];
+    openDialog.Filter :='Text files only|*.txt';
+    openDialog.FilterIndex := 1;
+    if openDialog.Execute then  CodeFile:=openDialog.FileName;
+    openDialog.Free;
+
+    Code.Lines.LoadFromFile(CodeFile);
+
+    b_EnterText.Visible := False;
+    b_EnterText.Enabled := False;
+    b_OpenFile.Visible := False;
+    b_OpenFile.Enabled := False;
+    b_Analyze.Enabled := True;
+    ConditionalOperators.Caption := '';
+    NumberOfOperators.Caption := '';
+    RelativeComplexity.Caption := '';
+    MaximalAttachments.Caption := '';
+    Code.Visible := True;
+    MainForm.Height := DEFFORMHEIGHT;
+  except
+    ClearInformation;
+    ShowMessage('Ошибка в чтении');
+  end;
+
+end;
+
+procedure TMainForm.b_EnterTextClick(Sender: TObject);
+begin
+  b_EnterText.Visible := False;
+  b_EnterText.Enabled := False;
+  b_OpenFile.Visible := False;
+  b_OpenFile.Enabled := False;
+  b_Analyze.Enabled := True;
+  ConditionalOperators.Caption := '';
+  NumberOfOperators.Caption := '';
+  RelativeComplexity.Caption := '';
+  MaximalAttachments.Caption := '';
+  Code.Text := '';
+  Code.Visible := True;
+  MainForm.Height := DEFFORMHEIGHT;
+end;
+
+procedure TMainForm.FormCreate(Sender: TObject);
+begin
+  MainForm.Height := MINFORMHEIGHT;
+end;
+
+//-----------------------------[Code analyze]-----------------------------------
+procedure ClearEmpty (Code: TMemo);
+var
+  CountX, CountY: Integer;
+begin
+  for CountY := 0 to Code.Lines.Count-1 do
+    for CountX := 1 to Code.Lines.Count - 2 do
+      if (Code.Lines[CountX-1].IsEmpty  and Code.Lines[CountX].IsEmpty and Code.Lines[CountX+1].IsEmpty) then
+      begin
+        Code.Lines.Delete(CountX-1);
+        Code.Lines.Delete(CountX-1);
+      end;
+end;
+
+function CalculateNesting(Code: TMemo; Position: Integer; Length: Integer): Integer;
+var
+  CurrentCode: String;
+  RegularExpression: TRegEx;
+  Matches: TMatchCollection;
+  //OpreratorsWithBracket: array[0..6] of String = (
+begin
+{char
+boolean
+int
+if (Hello im good)
+other code}
+  Code.SelStart := Position - 1;
+  Code.SelLength := Length;
+  CurrentCode := Code.SelText;
+  //RegularExpression.Create('\bif([^}])+\}');
+  ShowMessage(CurrentCode);
+
+  ClearEmpty(Code);
+
+end;
+
+procedure CommentsRemove(Code: TMemo);
+var
+  RegularExpression: TRegEx;
+  Matches: TMatchCollection;
+  Match: TMatch;
+  CurrentOperator: Integer;
+  Count, Index: Integer;
+  CodeString: String;
+begin
+  //try                                    //??????????
+    CurrentOperator := 0;
+    CodeString := Code.Text;                               // 14/16 comm
+    ShowMessage(CodeString);
+    for CurrentOperator := 0 to (COMMENTSCOUNT - 1) do
+    begin
+      RegularExpression.Create(CommentsArray[CurrentOperator]);
+      Matches := RegularExpression.Matches(CodeString);        //
+      if (Matches.Count = 0) then
+        ShowMessage('No comments')
+      else
+        ShowMessage('Comments count : ' + IntToStr(Matches.Count));
+        for Count := 0 to (Matches.Count - 1) do
+        begin
+          ShowMessage('Matches.Item[Count].Index : ' + inttostr(Matches.Item[Count].Index) + #13 + 'Matches.Item[Count].Length : ' + inttostr(Matches.Item[Count].Length) + #13 + 'Matches.Item[Count].Value : ' + Matches.Item[Count].Value);
+          if Matches.Item[Count].Length > 0 then
+            Delete(CodeString, (Matches.Item[Count].Index), (Matches.Item[Count].Length));
+        end;
+    end;
+    Code.Lines.Clear;
+    Code.Lines.Insert(0,CodeString);
+    ShowMessage(CodeString);
+
+    ClearEmpty(Code);
+   { Code.Text := '';
+    Code.Text := CodeString;
+  {
+  except
+    ShowMessage('Error!');
+  end;
+  }
+end;
+
+function OperatorsFind(Code: TMemo): Integer;
+var
+  RegularExpression: TRegEx;
+  Matches: TMatchCollection;
+  CurrentOperator: Integer;
+  CodeString: String;
+begin
+  try
+    CurrentOperator := 0;
+    CodeString := Code.Text;
+    for CurrentOperator := 0 to (OPERATORSCOUNT-1) do
+    begin
+      RegularExpression.Create(OperatorsArray[CurrentOperator]);
+      Matches := RegularExpression.Matches(CodeString);
+      NumberOperators := NumberOperators + Matches.Count;
+      Result := NumberOperators;
+    end;
+    Code.Lines.Clear;
+    Code.Lines.Insert(0,CodeString);
+
+    ClearEmpty(Code);
+  except
+    //MessageBox('Program error. Problem is in operators searching.','Error');
+  end;
+end;
+
+function ConditionalOperatorsFind(Code: TMemo): Integer;
+var
+  RegularExpression: TRegEx;
+  Matches: TMatchCollection;
+  CurrentOperator: Integer;
+  Position, Length: Integer;
+  Count: Integer;
+  CodeString: String;
+begin
+  //try                                    //??????????
+    CurrentOperator := 0;
+    CodeString := Code.Text;
+    for CurrentOperator := 0 to (CONDITIONALCOUNT-1) do
+    begin
+      RegularExpression.Create(ConditionalArray[CurrentOperator]);
+      Matches := RegularExpression.Matches(CodeString);
+      ShowMessage('Matches count : '+IntToStr(Matches.Count));
+      NumberConditionalOperators := NumberConditionalOperators + Matches.Count;
+      if (CurrentOperator = 0) then
+        for Count := 0 to (Matches.Count-1) do
+        begin
+          Position := Matches.Item[Count].Index;//+if length
+          Length := Matches.Item[Count].Length;
+          CalculateNesting(Code, Position, Length);
+        end;
+      Result := NumberConditionalOperators;
+    end;
+    Code.Lines.Clear;
+    Code.Lines.Insert(0,CodeString);
+  {except
+    //MessageBox(tdiInformation,PChar('Program error. Problem is in operators searching.'),PChar('Error'));
+  end;}
+end;
+
+//------------------------------[ Main code ]-----------------------------------
+procedure TMainForm.b_AnalyzeClick(Sender: TObject);
+begin
+  if (Code.Text <> '') then
+    Code.Lines.SaveToFile('backUpCode.txt');
+  CommentsRemove(Code);
+
+  NumberOperators := 0;
+  NumberConditionalOperators := 0;
+  NumberOfOperators.Caption := IntToStr(OperatorsFind(Code));
+  ConditionalOperators.Caption := IntToStr(ConditionalOperatorsFind(Code));
+  if NumberOperators <> 0 then
+    RelativeComplexity.Caption := floattostr(NumberConditionalOperators/NumberOperators)
+  else
+    RelativeComplexity.Caption := ' x / 0';
+
+end;
+
+end.
